@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror,
+    contract, contractimpl, contracttype,
     symbol_short, vec, 
     Address, Bytes, BytesN, Env, Map, String, Symbol, Vec,
 };
@@ -27,21 +27,6 @@ const KEY_MAP: Symbol = symbol_short!("map_val");
 const DAY_IN_LEDGERS: u32 = 17_280;
 const BUMP_AMOUNT: u32 = 7 * DAY_IN_LEDGERS;
 const LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS;
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//                              CUSTOM ERROR TYPE
-// ═══════════════════════════════════════════════════════════════════════════════
-// Solidity equivalent: custom errors with revert reasons
-
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum DataTypeError {
-    ValueNotFound = 1,
-    InvalidIndex = 2,
-    KeyNotFound = 3,
-    EmptyVector = 4,
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //                              CUSTOM STRUCT TYPE
@@ -188,7 +173,7 @@ impl DataTypesContract {
     }
     
     /// Create a string from a static str (useful for initialization)
-    pub fn create_string(env: Env, value: String) -> String {
+    pub fn create_string(_env: Env, value: String) -> String {
         // In Soroban, you typically receive strings from the client
         // This just demonstrates returning a string
         value
@@ -278,30 +263,42 @@ impl DataTypesContract {
     }
     
     /// Pop the last value from the vector
-    pub fn vector_pop(env: Env) -> Result<i128, DataTypeError> {
+    /// Uses panic! - like Solidity's require()
+    pub fn vector_pop(env: Env) -> i128 {
         Self::extend_ttl(&env);
         let mut vec: Vec<i128> = env.storage()
             .instance()
             .get(&KEY_VEC)
             .unwrap_or(Vec::new(&env));
         
-        match vec.pop_back() {
-            Some(value) => {
-                env.storage().instance().set(&KEY_VEC, &vec);
-                Ok(value)
-            }
-            None => Err(DataTypeError::EmptyVector),
+        // ┌─────────────────────────────────────────────────────────────────────┐
+        // │ USING panic! - Like Solidity's require()                            │
+        // │ Solidity: require(vec.length > 0, "Vector is empty");               │
+        // └─────────────────────────────────────────────────────────────────────┘
+        if vec.is_empty() {
+            panic!("Vector is empty - cannot pop");
         }
+        
+        let value = vec.pop_back().unwrap();
+        env.storage().instance().set(&KEY_VEC, &vec);
+        value
     }
     
     /// Get value at specific index
-    pub fn vector_get(env: Env, index: u32) -> Result<i128, DataTypeError> {
+    /// Uses assert! - compact validation
+    pub fn vector_get(env: Env, index: u32) -> i128 {
         let vec: Vec<i128> = env.storage()
             .instance()
             .get(&KEY_VEC)
             .unwrap_or(Vec::new(&env));
         
-        vec.get(index).ok_or(DataTypeError::InvalidIndex)
+        // ┌─────────────────────────────────────────────────────────────────────┐
+        // │ USING assert! - One-liner validation                                │
+        // │ Solidity: require(index < vec.length, "Index out of bounds");       │
+        // └─────────────────────────────────────────────────────────────────────┘
+        assert!(index < vec.len(), "Index out of bounds");
+        
+        vec.get(index).unwrap()
     }
     
     /// Get vector length
@@ -322,20 +319,18 @@ impl DataTypesContract {
     }
     
     /// Set value at specific index
-    pub fn vector_set(env: Env, index: u32, value: i128) -> Result<(), DataTypeError> {
+    pub fn vector_set(env: Env, index: u32, value: i128) {
         Self::extend_ttl(&env);
         let mut vec: Vec<i128> = env.storage()
             .instance()
             .get(&KEY_VEC)
             .unwrap_or(Vec::new(&env));
         
-        if index >= vec.len() {
-            return Err(DataTypeError::InvalidIndex);
-        }
+        // Using assert! for index validation
+        assert!(index < vec.len(), "Index out of bounds");
         
         vec.set(index, value);
         env.storage().instance().set(&KEY_VEC, &vec);
-        Ok(())
     }
     
     /// Create vector with initial values (like array literal in Solidity)
@@ -369,13 +364,22 @@ impl DataTypesContract {
     }
     
     /// Get a value from the map
-    pub fn map_get(env: Env, key: Symbol) -> Result<i128, DataTypeError> {
+    /// Uses panic! with if-else pattern
+    pub fn map_get(env: Env, key: Symbol) -> i128 {
         let map: Map<Symbol, i128> = env.storage()
             .instance()
             .get(&KEY_MAP)
             .unwrap_or(Map::new(&env));
         
-        map.get(key).ok_or(DataTypeError::KeyNotFound)
+        // ┌─────────────────────────────────────────────────────────────────────┐
+        // │ USING match + panic! for "key not found" error                      │
+        // │ Solidity doesn't have this - mapping returns 0 for missing keys     │
+        // │ In Soroban, we can enforce that key must exist!                     │
+        // └─────────────────────────────────────────────────────────────────────┘
+        match map.get(key) {
+            Some(value) => value,
+            None => panic!("Key not found in map"),
+        }
     }
     
     /// Check if key exists in map
@@ -389,20 +393,23 @@ impl DataTypesContract {
     }
     
     /// Remove a key from the map
-    pub fn map_remove(env: Env, key: Symbol) -> Result<i128, DataTypeError> {
+    pub fn map_remove(env: Env, key: Symbol) -> i128 {
         Self::extend_ttl(&env);
         let mut map: Map<Symbol, i128> = env.storage()
             .instance()
             .get(&KEY_MAP)
             .unwrap_or(Map::new(&env));
         
-        // First get the value before removing
-        let value = map.get(key.clone()).ok_or(DataTypeError::KeyNotFound)?;
+        // First check if key exists
+        assert!(map.contains_key(key.clone()), "Key not found - cannot remove");
         
-        // Now remove the key (returns Option<()> in Soroban SDK)
+        // Get value before removing
+        let value = map.get(key.clone()).unwrap();
+        
+        // Remove the key
         map.remove(key);
         env.storage().instance().set(&KEY_MAP, &map);
-        Ok(value)
+        value
     }
     
     /// Get map size
@@ -422,6 +429,13 @@ impl DataTypesContract {
     /// Set balance for an address (like balances[addr] = value)
     pub fn set_balance(env: Env, addr: Address, amount: i128) {
         Self::extend_ttl(&env);
+        
+        // ┌─────────────────────────────────────────────────────────────────────┐
+        // │ USING assert! for input validation                                  │
+        // │ Solidity: require(amount >= 0, "Amount cannot be negative");        │
+        // └─────────────────────────────────────────────────────────────────────┘
+        assert!(amount >= 0, "Amount cannot be negative");
+        
         // Using persistent storage for per-user data
         env.storage().persistent().set(&addr, &amount);
     }
@@ -437,7 +451,7 @@ impl DataTypesContract {
     
     /// Create and return a custom struct (DataRecord)
     pub fn create_record(
-        env: Env,
+        _env: Env,
         id: u32,
         name: String,
         value: i128,
@@ -458,11 +472,16 @@ impl DataTypesContract {
     }
     
     /// Retrieve a record by key
-    pub fn get_record(env: Env, key: u32) -> Result<DataRecord, DataTypeError> {
+    /// Uses panic! when record not found
+    pub fn get_record(env: Env, key: u32) -> DataRecord {
+        // ┌─────────────────────────────────────────────────────────────────────┐
+        // │ USING .expect() - Shorthand for unwrap with panic message           │
+        // │ Same as: match value { Some(v) => v, None => panic!("msg") }        │
+        // └─────────────────────────────────────────────────────────────────────┘
         env.storage()
             .persistent()
             .get(&key)
-            .ok_or(DataTypeError::ValueNotFound)
+            .expect("Record not found")
     }
     
     // ═══════════════════════════════════════════════════════════════════════════
@@ -475,11 +494,19 @@ impl DataTypesContract {
     }
     
     /// Convert i128 to u32 (with bounds checking)
-    pub fn i128_to_u32(value: i128) -> Result<u32, DataTypeError> {
-        if value < 0 || value > u32::MAX as i128 {
-            return Err(DataTypeError::InvalidIndex);
+    /// Uses panic! for invalid conversions
+    pub fn i128_to_u32(value: i128) -> u32 {
+        // ┌─────────────────────────────────────────────────────────────────────┐
+        // │ USING if + panic! for multiple conditions                           │
+        // │ Solidity: require(value >= 0 && value <= type(uint32).max, "...");  │
+        // └─────────────────────────────────────────────────────────────────────┘
+        if value < 0 {
+            panic!("Cannot convert negative i128 to u32");
         }
-        Ok(value as u32)
+        if value > u32::MAX as i128 {
+            panic!("Value too large to fit in u32");
+        }
+        value as u32
     }
     
     // ═══════════════════════════════════════════════════════════════════════════
@@ -496,6 +523,47 @@ impl DataTypesContract {
 mod test;
 
 /*
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    WHEN TO USE: panic! vs assert! vs Result                  ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  1. panic!("message")                                                        ║
+║  ─────────────────────────────────────────────────────────────────────────── ║
+║  • Use when: Unrecoverable errors, programmer mistakes, impossible states    ║
+║  • Like Solidity: revert("reason") or require(false, "reason")               ║
+║  • Example: panic!("Division by zero");                                      ║
+║  • When: Multiple conditions, complex error messages                         ║
+║                                                                              ║
+║  2. assert!(condition, "message")                                            ║
+║  ─────────────────────────────────────────────────────────────────────────── ║
+║  • Use when: Simple boolean validation (TRUE = ok, FALSE = error)            ║
+║  • Like Solidity: require(condition, "reason")                               ║
+║  • Example: assert!(amount > 0, "Amount must be positive");                  ║
+║  • When: One-liner validations, preconditions                                ║
+║                                                                              ║
+║  3. .expect("message")                                                       ║
+║  ─────────────────────────────────────────────────────────────────────────── ║
+║  • Use when: Unwrapping Option/Result with custom error                      ║
+║  • Like: Solidity require but for optional values                            ║
+║  • Example: map.get(key).expect("Key not found");                            ║
+║  • When: You're confident the value should exist                             ║
+║                                                                              ║
+║  4. .unwrap_or(default)                                                      ║
+║  ─────────────────────────────────────────────────────────────────────────── ║
+║  • Use when: Missing value is OK, use default instead                        ║
+║  • Like Solidity: mapping returns 0 for missing keys                         ║
+║  • Example: storage.get(&KEY).unwrap_or(0);                                  ║
+║  • When: You want graceful degradation                                       ║
+║                                                                              ║
+║  5. Result<T, E> (Custom errors - not used in this example)                  ║
+║  ─────────────────────────────────────────────────────────────────────────── ║
+║  • Use when: Caller needs to handle errors programmatically                  ║
+║  • Like Solidity: Custom errors with revert                                  ║
+║  • Example: fn transfer() -> Result<(), TokenError>                          ║
+║  • When: Production contracts, APIs, multiple error types                    ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                    SOROBAN vs SOLIDITY DATA TYPES COMPARISON                 ║
 ╠══════════════════════════════════════════════════════════════════════════════╣

@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::{DataTypesContract, DataTypesContractClient, DataRecord, DataTypeError};
+use crate::{DataTypesContract, DataTypesContractClient, DataRecord};
 use soroban_sdk::{symbol_short, testutils::Address as _, Address, Bytes, Env, String, Symbol};
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -211,14 +211,14 @@ fn test_vector_operations() {
     // Check length
     assert_eq!(client.vector_len(), 3);
     
-    // Get by index - client returns the Result's Ok value directly, panics on Err
+    // Get by index
     assert_eq!(client.vector_get(&0), 100);
     assert_eq!(client.vector_get(&1), 200);
     assert_eq!(client.vector_get(&2), 300);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")]  // InvalidIndex = 2
+#[should_panic(expected = "Index out of bounds")]
 fn test_vector_get_invalid_index() {
     let env = Env::default();
     let contract_id = env.register(DataTypesContract, ());
@@ -248,7 +248,7 @@ fn test_vector_pop() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #4)")]  // EmptyVector = 4
+#[should_panic(expected = "Vector is empty")]
 fn test_vector_pop_empty() {
     let env = Env::default();
     let contract_id = env.register(DataTypesContract, ());
@@ -344,7 +344,20 @@ fn test_map_remove() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #3)")]  // KeyNotFound = 3
+#[should_panic(expected = "Key not found")]
+fn test_map_get_nonexistent() {
+    let env = Env::default();
+    let contract_id = env.register(DataTypesContract, ());
+    let client = DataTypesContractClient::new(&env, &contract_id);
+    
+    client.init_map();
+    let key: Symbol = symbol_short!("test");
+    // Get non-existent key should panic
+    let _ = client.map_get(&key);
+}
+
+#[test]
+#[should_panic(expected = "Key not found")]
 fn test_map_remove_nonexistent() {
     let env = Env::default();
     let contract_id = env.register(DataTypesContract, ());
@@ -387,6 +400,18 @@ fn test_address_balance() {
     assert_eq!(client.get_balance(&alice), 500_000);
 }
 
+#[test]
+#[should_panic(expected = "Amount cannot be negative")]
+fn test_balance_negative_rejected() {
+    let env = Env::default();
+    let contract_id = env.register(DataTypesContract, ());
+    let client = DataTypesContractClient::new(&env, &contract_id);
+    
+    let alice = Address::generate(&env);
+    // Setting negative balance should panic
+    client.set_balance(&alice, &-100);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //                     CUSTOM STRUCT TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -424,7 +449,7 @@ fn test_store_and_retrieve_record() {
     
     client.store_record(&42, &record);
     
-    // Retrieve and verify - client returns value directly
+    // Retrieve and verify
     let retrieved = client.get_record(&42);
     assert_eq!(retrieved.id, 42);
     assert_eq!(retrieved.name, name);
@@ -433,7 +458,7 @@ fn test_store_and_retrieve_record() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #1)")]  // ValueNotFound = 1
+#[should_panic(expected = "Record not found")]
 fn test_record_not_found() {
     let env = Env::default();
     let contract_id = env.register(DataTypesContract, ());
@@ -469,24 +494,24 @@ fn test_i128_to_u32_success() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")]  // InvalidIndex = 2
+#[should_panic(expected = "Cannot convert negative")]
 fn test_i128_to_u32_negative() {
     let env = Env::default();
     let contract_id = env.register(DataTypesContract, ());
     let client = DataTypesContractClient::new(&env, &contract_id);
     
-    // Negative number should fail
+    // Negative number should panic
     let _ = client.i128_to_u32(&-1);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")]  // InvalidIndex = 2
+#[should_panic(expected = "Value too large")]
 fn test_i128_to_u32_too_large() {
     let env = Env::default();
     let contract_id = env.register(DataTypesContract, ());
     let client = DataTypesContractClient::new(&env, &contract_id);
     
-    // Too large number should fail
+    // Too large number should panic
     let too_large: i128 = (u32::MAX as i128) + 1;
     let _ = client.i128_to_u32(&too_large);
 }
