@@ -1,0 +1,17 @@
+{
+  "name": "sep41-token-frontend",
+  "version": "1.0.0",
+  "description": "Frontend for SEP-41 Token Contract",
+  "type": "module",
+  "scripts": {
+    "dev": "npx serve .",
+    "test": "node tokenClient.js"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^12.0.1",
+    "@stellar/freighter-api": "^2.0.0"
+  },
+  "devDependencies": {
+    "serve": "^14.2.0"
+  }
+}
